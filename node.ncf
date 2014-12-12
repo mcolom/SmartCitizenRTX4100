@@ -1,0 +1,14 @@
+###############################################################################
+#                         NODE CONFIGURATION FILE
+# Please refer to the PerlBuild documentation for information regarding the
+# meaning of the fields in this file.
+###############################################################################
+NODE_NAME=Blinky
+NODE=Projects\Amelie\COLApps\Apps\Blinky
+C-FILES=
+  Main.c
+
+
+OTHER = \
+  Releases.txt \
+
