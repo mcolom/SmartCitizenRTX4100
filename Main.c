@@ -1,27 +1,21 @@
-/****************************************************************************
-* Program/file: Main.c
-*
-* Copyright (C) by RTX A/S, Denmark.
-* These computer program listings and specifications, are the property of
-* RTX A/S, Denmark and shall not be reproduced or copied or used in
-* whole or in part without written permission from RTX A/S, Denmark.
-*
-* DESCRIPTION: Co-Located Application (COLA).
-*
-****************************************************************************/
-
-
-/****************************************************************************
-*                                  PVCS info
-*****************************************************************************
-
-$Author:   lka  $
-$Date:   26 Sep 2013 15:43:42  $
-$Revision:   1.0  $
-$Modtime:   05 Sep 2012 11:21:52  $
-$Archive:   J:/sw/Projects/Amelie/COLApps/Scripts/TemplateApp/vcs/Main.c_v  $
-
-*/
+/*
+ * Copyright (C) 2014 Miguel Colom - http://mcolom.info
+ * This file is part of the SmartCitizen RTX4100 module firmware
+ *
+ * This file may be licensed under the terms of of the
+ * GNU General Public License Version 2 (the ``GPL'').
+ *
+ * Software distributed under the License is distributed
+ * on an ``AS IS'' basis, WITHOUT WARRANTY OF ANY KIND, either
+ * express or implied. See the GPL for the specific language
+ * governing rights and limitations.
+ *
+ * You should have received a copy of the GPL along with this
+ * program. If not, go to http://www.gnu.org/licenses/gpl.html
+ * or write to the Free Software Foundation, Inc.,
+ * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
+ */
 
 /****************************************************************************
 *                               Include files
@@ -29,62 +23,122 @@ $Archive:   J:/sw/Projects/Amelie/COLApps/Scripts/TemplateApp/vcs/Main.c_v  $
 
 #include <Core/RtxCore.h>
 #include <Ros/RosCfg.h>
-#include <PortDef.h>
+//#include <PortDef.h>
+//#include <Api/Api.h>
 #include <Cola/Cola.h>
-#include <em_gpio.h>
+#include <Protothreads/Protothreads.h>
+//#include <SwClock/SwClock.h>
+//#include <BuildInfo/BuildInfo.h>
+//#include <NetUtils/NetUtils.h>
+
+//#include <ctype.h>
+//#include <string.h>
+//#include <stdio.h>
+//#include <stdlib.h>
+
+//#include <PtApps/AppCommon.h>
+//#include <PtApps/AppLed.h>
+//#include <PtApps/AppSocket.h>
+//#include <PtApps/AppWifi.h>
+//#include <PtApps/AppSntp.h>
+#include <Drivers/DrvLeuart.h>
+//#include <Drivers/DrvButtons.h>
 
 /****************************************************************************
 *                              Macro definitions
 ****************************************************************************/
-#define LEDPORT GREEN_LED_PORT
-#define LEDPIN  GREEN_LED_PIN
+#define PRINT(x) UartPrint(x)
 
 /****************************************************************************
 *                     Enumerations/Type definitions/Structs
 ****************************************************************************/
 
+//
+
 /****************************************************************************
 *                            Global variables/const
 ****************************************************************************/
 
+//
+
 /****************************************************************************
 *                            Local variables/const
 ****************************************************************************/
-RosTimerConfigType AppLedTimer = ROSTIMER(COLA_TASK, TIMEOUT, APP_LED_TIMER);
+static RsListEntryType PtList; // Protothreads list
+
 
 /****************************************************************************
 *                          Local Function prototypes
 ****************************************************************************/
 
+//
+
 /****************************************************************************
 *                                Implementation
 ***************************************************************************/
-void ColaTask(const RosMailType* Mail)
+
+static void UartPrint(char *pStr) {
+  while (*pStr != '\0') {
+    if (*pStr == '\n')
+      DrvLeuartTx('\r');
+    DrvLeuartTx(*pStr++);
+  }
+}
+
+static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail))
 {
-  switch (Mail->Primitive)
-  {
+  PT_BEGIN(Pt);
+
+  // Init LUART
+  static struct pt childPt;
+  PT_SPAWN(Pt, &childPt, PtDrvLeuartInit(&childPt, Mail));
+
+  // Shell loop:
+  while (1) {
+    //Flush UART RX buffer
+    DrvLeuartRxFlush();
+    PRINT("> ");
+    PRINT("miau, miau, miau\r\n");
+
+
+    // Read from UART to we have a command line
+    while (1) {
+      rsuint8 c;
+      PRINT("@\r\n");
+
+      // read all
+      while (DrvLeuartRx(&c, 1)) {
+        // Send data to the PC
+        DrvLeuartTxBuf("Saludos, humano\r\n", 17);
+      }
+
+      // Allow other tasks to run
+      PT_YIELD(Pt);
+    }
+  }
+
+  PT_END(Pt);
+}
+
+void ColaTask(const RosMailType *Mail)
+{
+  // Pre-dispatch mail handling
+  switch (Mail->Primitive) {
     case INITTASK:
-      GPIO_PinModeSet(LEDPORT, LEDPIN, gpioModePushPull, 1);
-      RosTimerStart(APP_LED_TIMER, 1 * RS_T1SEC, &AppLedTimer);
+      // Init the Protothreads lib
+      PtInit(&PtList);
+    
+      // Start the Main protothread
+      PtStart(&PtList, PtMain, NULL, NULL);
       break;
 
     case TERMINATETASK:
       RosTaskTerminated(ColaIf->ColaTaskId);
       break;
-
-    case TIMEOUT:
-      switch (Mail->Timeout.Parameter)
-      {
-        case APP_LED_TIMER:
-          GPIO_PinOutToggle(LEDPORT, LEDPIN);
-          RosTimerStart(APP_LED_TIMER, 5 * RS_T100MS, &AppLedTimer);
-          break;
-      }
-      break;
-
-    default:
-      break;
   }
+
+  // Dispatch mail to all protothreads started
+  PtDispatchMail(&PtList, Mail);
 }
 
 // End of file.
