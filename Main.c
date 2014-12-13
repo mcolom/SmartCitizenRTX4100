@@ -10,15 +10,16 @@
 *
 ****************************************************************************/
 
+
 /****************************************************************************
 *                                  PVCS info
 *****************************************************************************
 
-$Author:   lb  $
-$Date:   05 Sep 2012 11:21:52  $
-$Revision:   1.3  $
-$Modtime:   05 Sep 2012 09:50:14  $
-$Archive:   J:/sw/Projects/Amelie/COLApps/Apps/Blinky/vcs/Main.c_v  $
+$Author:   lka  $
+$Date:   26 Sep 2013 15:43:42  $
+$Revision:   1.0  $
+$Modtime:   05 Sep 2012 11:21:52  $
+$Archive:   J:/sw/Projects/Amelie/COLApps/Scripts/TemplateApp/vcs/Main.c_v  $
 
 */
 
@@ -64,7 +65,7 @@ void ColaTask(const RosMailType* Mail)
   {
     case INITTASK:
       GPIO_PinModeSet(LEDPORT, LEDPIN, gpioModePushPull, 1);
-      RosTimerStart(APP_LED_TIMER, 0.5 * RS_T1SEC, &AppLedTimer);
+      RosTimerStart(APP_LED_TIMER, 1 * RS_T1SEC, &AppLedTimer);
       break;
 
     case TERMINATETASK:
@@ -76,7 +77,7 @@ void ColaTask(const RosMailType* Mail)
       {
         case APP_LED_TIMER:
           GPIO_PinOutToggle(LEDPORT, LEDPIN);
-          RosTimerStart(APP_LED_TIMER, 0.5 * RS_T100MS, &AppLedTimer);
+          RosTimerStart(APP_LED_TIMER, 5 * RS_T100MS, &AppLedTimer);
           break;
       }
       break;
