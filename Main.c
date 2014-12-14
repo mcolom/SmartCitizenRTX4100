@@ -47,7 +47,10 @@
 /****************************************************************************
 *                              Macro definitions
 ****************************************************************************/
-#define PRINT(x) UartPrint(x)
+#define TMP_STR_LENGTH 200
+
+#define PRINT(x) UartPrint((rsuint8*)x)
+#define PRINTLN(x) UartPrintLn((rsuint8*)x)
 
 /****************************************************************************
 *                     Enumerations/Type definitions/Structs
@@ -59,7 +62,7 @@
 *                            Global variables/const
 ****************************************************************************/
 
-//
+static char strbuf[TMP_STR_LENGTH]; // Used by sprintf, snprintf
 
 /****************************************************************************
 *                            Local variables/const
@@ -77,18 +80,33 @@ static RsListEntryType PtList; // Protothreads list
 *                                Implementation
 ***************************************************************************/
 
-static void UartPrint(char *pStr) {
-  while (*pStr != '\0') {
-    if (*pStr == '\n')
-      DrvLeuartTx('\r');
-    DrvLeuartTx(*pStr++);
-  }
+// Send a string to the dock (without adding a carriage return and the end)
+static void UartPrint(rsuint8 *str) {
+  DrvLeuartTxBuf(str, strlen((char*)str));
 }
 
+// Send a string to the dock, adding a carriage return and the end
+static void UartPrintLn(rsuint8 *str) {
+  UartPrint(str);
+  DrvLeuartTx('\r');
+  DrvLeuartTx('\n');
+}
+
+// Process a line the user send to the terminal
+void process_terminal_line(rsuint8 *buffer) {
+  sprintf(strbuf, "Linea: %s", buffer);
+  PRINTLN(strbuf);
+}
+
+// Main thread
 static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail))
 {
   PT_BEGIN(Pt);
-
+  
+  // Terminal buffer
+  static rsuint8 buffer[TMP_STR_LENGTH];
+  static unsigned buf_ptr = 0;
+  
   // Init LUART
   static struct pt childPt;
   PT_SPAWN(Pt, &childPt, PtDrvLeuartInit(&childPt, Mail));
@@ -97,28 +115,37 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail))
   while (1) {
     //Flush UART RX buffer
     DrvLeuartRxFlush();
-    PRINT("> ");
-    PRINT("miau, miau, miau\r\n");
-
 
     // Read from UART to we have a command line
     while (1) {
+      // read lines
       rsuint8 c;
-      PRINT("@\r\n");
-
-      // read all
       while (DrvLeuartRx(&c, 1)) {
-        // Send data to the PC
-        DrvLeuartTxBuf("Saludos, humano\r\n", 17);
+		if (buf_ptr >= TMP_STR_LENGTH || c == '\r' || c == '\n') {
+          PRINTLN("");
+          buffer[buf_ptr] = 0; // Add end-of-string zero
+          process_terminal_line(buffer);
+          buf_ptr = 0;
+          PRINT("debug$ "); // Prompt
+		}
+		else {
+          rsuint8 echoed[2] = {c, 0};
+		  PRINT(echoed); // Echo character
+          buffer[buf_ptr++] = c; // Add a new character to the line
+        }
       }
 
       // Allow other tasks to run
       PT_YIELD(Pt);
     }
+    
+    PRINTLN("EXIT FROM INNER LOOP");
   }
 
   PT_END(Pt);
 }
+
+
 
 void ColaTask(const RosMailType *Mail)
 {
