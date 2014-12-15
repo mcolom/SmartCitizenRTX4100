@@ -47,6 +47,8 @@
 /****************************************************************************
 *                              Macro definitions
 ****************************************************************************/
+#define DEBUG_WIFI
+
 #define TMP_STR_LENGTH 200
 
 #define PRINT(x) UartPrint((rsuint8*)x)
@@ -93,17 +95,40 @@ static void UartPrintLn(rsuint8 *str) {
 }
 
 void WiFi_poweron(struct pt *Pt, const RosMailType* Mail) {
+  #ifdef DEBUG_WIFI
+  PRINTLN("Called WiFi_poweron");
+  #endif DEBUG_WIFI
   static struct pt childPt;
   PT_SPAWN(Pt, &childPt, PtAppWifiPowerOn(&childPt, Mail));
 }
 
 void WiFi_poweroff(struct pt *Pt, const RosMailType* Mail) {
+  #ifdef DEBUG_WIFI
+  PRINTLN("Called WiFi_poweroff");
+  #endif DEBUG_WIFI
   static struct pt childPt;
   PT_SPAWN(Pt, &childPt, PtAppWifiPowerOff(&childPt, Mail));
 }
 
 int WiFi_power_status() {
+  #ifdef DEBUG_WIFI
+  PRINTLN("Called WiFi_power_status");
+  #endif DEBUG_WIFI
   return (int)AppWifiIsPowerOn();  
+}
+
+void WiFi_getMAC(unsigned char *MAC) {
+  const ApiWifiMacAddrType *pMacAddr = AppWifiGetMacAddr();
+  int i;
+  for (i = 0; i < 6; i++)
+    MAC[i] = pMacAddr[i];
+  #ifdef DEBUG_WIFI
+  PRINT("Called WiFi_getMAC. MAC=");
+  sprintf(strbuf, "%02X-%02X-%02X-%02X-%02X-%02X", MAC[0], MAC[1],
+                                                   MAC[2], MAC[3],
+                                                   MAC[4], MAC[5]);
+  PRINTLN(strbuf);
+  #endif DEBUG_WIFI    
 }
 
 void WiFi_info() {
@@ -214,6 +239,10 @@ void process_terminal_line(rsuint8 *buffer,
   }
   else if (!strcmp(buffer, "info")) {
     WiFi_info();
+  }
+  else if (!strcmp(buffer, "getmac")) {
+    unsigned char MAC[6];
+    WiFi_getMAC(MAC);
   }
   else
     if (strlen(buffer) > 0)
