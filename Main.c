@@ -94,6 +94,7 @@ static void UartPrintLn(rsuint8 *str) {
   DrvLeuartTx('\n');
 }
 
+// WiFi power on
 void WiFi_poweron(struct pt *Pt, const RosMailType* Mail) {
   #ifdef DEBUG_WIFI
   PRINTLN("Called WiFi_poweron");
@@ -102,6 +103,7 @@ void WiFi_poweron(struct pt *Pt, const RosMailType* Mail) {
   PT_SPAWN(Pt, &childPt, PtAppWifiPowerOn(&childPt, Mail));
 }
 
+// WiFi power off
 void WiFi_poweroff(struct pt *Pt, const RosMailType* Mail) {
   #ifdef DEBUG_WIFI
   PRINTLN("Called WiFi_poweroff");
@@ -110,6 +112,7 @@ void WiFi_poweroff(struct pt *Pt, const RosMailType* Mail) {
   PT_SPAWN(Pt, &childPt, PtAppWifiPowerOff(&childPt, Mail));
 }
 
+// WiFi get power status
 int WiFi_power_status() {
   #ifdef DEBUG_WIFI
   PRINTLN("Called WiFi_power_status");
@@ -117,6 +120,7 @@ int WiFi_power_status() {
   return (int)AppWifiIsPowerOn();  
 }
 
+// WiFi get MAC address
 void WiFi_getMAC(unsigned char *MAC) {
   const ApiWifiMacAddrType *pMacAddr = AppWifiGetMacAddr();
   int i;
@@ -130,6 +134,88 @@ void WiFi_getMAC(unsigned char *MAC) {
   PRINTLN(strbuf);
   #endif DEBUG_WIFI    
 }
+
+static PT_THREAD(PtDoConnect(struct pt *Pt, const RosMailType *Mail))
+{
+  static struct pt childPt;
+
+  PT_BEGIN(Pt);
+
+  PRINTLN("PtDoConnect...PtAppWifiConnect...");
+  PT_SPAWN(Pt, &childPt, PtAppWifiConnect(&childPt, Mail));
+  if (AppWifiIsConnected()) {
+    // Connected to AP.
+    PRINTLN("CONNECTED");
+    // Update DNS client with default gateway addr
+    //SendApiDnsClientAddServerReq(COLA_TASK, AppWifiIpv4GetGateway(), AppWifiIpv6GetAddr()->Gateway);
+  }
+  else
+    PRINTLN("Failed PtDoConnect");
+
+  PT_END(Pt);
+}
+
+
+// WiFi setup the access point
+void WiFi_setup_AP(struct pt *Pt,
+                   const RosMailType* Mail) {
+  #ifdef DEBUG_WIFI
+  PRINTLN("Called WiFi_setup_AP");
+  #endif DEBUG_WIFI
+  
+  // Configure AP 
+  // Look for definitions in ApiAtherosWifi.h
+  rsuint8 Index = 0;
+  rsuint8 *Ssid = "SSID";
+  rsuint8 SsidLength = strlen(Ssid);
+  
+  // SecurityType: AWST_NONE, AWST_WEP, AWST_WPA, or AWST_WPA2
+  ApiWifiSecTypeType SecurityType = AWST_WPA;
+  
+  ApiWifiCipherInfoType Cipher;
+  Cipher.Ucipher = AWCT_TKIP; // the cipher type used for unicast
+  Cipher.Mcipher = AWCT_TKIP; // the cipher type used for multicast
+  // AWCT_WEP, AWCT_TKIP, or AWCT_CCMP
+  
+  rsuint8 KeyIndex = 0;
+  rsuint8 *Key = "PASSWORD";
+  rsuint8 KeyLength = strlen(Key);
+  
+  RsStatusType status = AppWifiSetApInfo(Index, 
+                                         SsidLength,
+                                         Ssid,   
+                                         SecurityType,
+                                         Cipher,
+                                         KeyIndex,
+                                         KeyLength,
+                                         Key);
+  
+  sprintf(strbuf, "Status is RSS_SUCCESS: %d", status == RSS_SUCCESS);
+  PRINTLN(strbuf);
+  
+  if (status == RSS_SUCCESS)
+    AppWifiWriteApInfoToNvs();
+    
+  sprintf(strbuf, "AppWifiIsConnected: %d", AppWifiIsConnected());
+  PRINTLN(strbuf);
+  
+  sprintf(strbuf, "AppWifiIsAssociated: %d", AppWifiIsAssociated());
+  PRINTLN(strbuf);
+    
+    
+  static struct pt childPt;  
+  
+  PRINTLN("1");
+  PT_SPAWN(Pt, &childPt, PtAppWifiConnect(&childPt, Mail));
+  PRINTLN("2");
+  //    
+  sprintf(strbuf, "AppWifiIsConnected: %d", AppWifiIsConnected());
+  PRINTLN(strbuf);
+  
+  sprintf(strbuf, "AppWifiIsAssociated: %d", AppWifiIsAssociated());
+  PRINTLN(strbuf);
+}
+
 
 void WiFi_info() {
   PRINTLN(strbuf);
@@ -244,9 +330,15 @@ void process_terminal_line(rsuint8 *buffer,
     unsigned char MAC[6];
     WiFi_getMAC(MAC);
   }
+  else if (!strcmp(buffer, "setupap")) {
+   WiFi_setup_AP(Pt, Mail);
+  }
   else
     if (strlen(buffer) > 0)
-      PRINTLN("Unknown command");  
+      PRINTLN("Unknown command");
+      
+      
+      
 }
 
 // Main thread
