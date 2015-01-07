@@ -1290,14 +1290,7 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail)) {
         SendApiSocketSendReq(COLA_TASK, socketHandle, tx_buffer, len, 0);
         break;
       }
-      case 11: { // Query: TCP is connected?
-        rsuint8 connected = Wifi_is_connected();
-        // Send response
-        DrvSpiTxStart(&connected, sizeof(connected));
-        PT_WAIT_UNTIL(Pt, IS_RECEIVED(SPI_TX_DONE));        
-        break;
-      }
-      case 12: { // Wifi chip power on/off        
+      case 11: { // Wifi chip power on/off        
         // Read parameter (0=off, 1=on)
         rsuint8 param;
         DrvSpiRx(&param, sizeof(param));
@@ -1307,7 +1300,7 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail)) {
                                                    param));        
         break;
       }
-      case 13: { // Wifi set powersave profile      
+      case 12: { // Wifi set powersave profile      
         // Read parameter
         // 0: low power, 1: medium power, 2: high power, 3: max power
         rsuint8 param;
@@ -1318,7 +1311,7 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail)) {
         Wifi_set_power_save_profile(param);
         break;
       }
-      case 14: { // Wifi set transmit power        
+      case 13: { // Wifi set transmit power        
         // Read parameter
         rsuint8 param;
         DrvSpiRx(&param, sizeof(param));
@@ -1328,11 +1321,11 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail)) {
         Wifi_set_tx_power(param);
         break;
       }
-      case 15: { // Wifi chip suspend
+      case 14: { // Wifi chip suspend
         PT_SPAWN(Pt, &childPt, PtWifi_suspend(&childPt, Mail));
         break;
       }
-      case 16: { // Wifi chip resume
+      case 15: { // Wifi chip resume
         PT_SPAWN(Pt, &childPt, PtWifi_resume(&childPt, Mail));
         break;
       }
