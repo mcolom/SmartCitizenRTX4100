@@ -31,6 +31,7 @@
 
 #include <string.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <stdlib.h>
 
 #include <Core/RtxCore.h>
@@ -110,8 +111,11 @@ static char TCP_is_connected; // True when the TCP connection has been stablishe
 static char TCP_received; // True when data has been received at the TCP connection
 
 static int socketHandle; // The socket ID of the TCP connection
-rsuint8 *TCP_receive_buffer_ptr; // TCP receive buffer
-int TCP_Rx_bufferLength; // Number of bytes received at the TCP buffer
+static rsuint8 *TCP_receive_buffer_ptr; // TCP receive buffer
+static int TCP_Rx_bufferLength; // Number of bytes received at the TCP buffer
+
+// Energy control
+static rsuint8 is_suspended;
 
 
 /****************************************************************************
@@ -473,6 +477,57 @@ static PT_THREAD(PtWifi_setup_AP(struct pt *Pt, const RosMailType *Mail, rsuint8
 }
 
 /**
+ * @brief Suspends the WiFi chip
+ * @param Pt : current protothread pointer
+ * @param Mail : protothread mail
+ **/
+static PT_THREAD(PtWifi_suspend(struct pt *Pt, const RosMailType *Mail)) {
+  PT_BEGIN(Pt);
+  is_suspended = true;
+  POWER_TEST_PIN_TOGGLE;
+  SendApiWifiSuspendReq(COLA_TASK, 10*60*1000); // ms
+  PT_WAIT_UNTIL(Pt, IS_RECEIVED(API_WIFI_SUSPEND_CFM));
+  POWER_TEST_PIN_TOGGLE;
+  EMU_EnterEM2(); // uC enter suspend, too. Use an external interrupt to wake up!
+  PT_END(Pt);
+}
+
+
+/**
+ * @brief Resumes the suspended WiFi chip
+ * @param Pt : current protothread pointer
+ * @param Mail : protothread mail
+ **/
+static PT_THREAD(PtWifi_resume(struct pt *Pt, const RosMailType *Mail)) {
+  PT_BEGIN(Pt);
+  POWER_TEST_PIN_TOGGLE;
+  SendApiWifiResumeReq(COLA_TASK);
+  PT_WAIT_UNTIL(Pt, IS_RECEIVED(API_WIFI_RESUME_CFM));
+  POWER_TEST_PIN_TOGGLE;
+  is_suspended = false;
+  PT_END(Pt);
+}
+
+/**
+ * @brief Sets the powersave profile
+ * @param profile : powersave profile, 0: low power, 1: medium power,
+ * 2: high power, 3: max power
+ **/
+void Wifi_set_power_save_profile(rsuint8 profile) {
+  rsuint8 p;
+  switch (profile) {
+    case 0: p = POWER_SAVE_LOW_IDLE; break; // low power
+    case 1: p = POWER_SAVE_MEDIUM_IDLE; break; // medium power
+    case 2: p = POWER_SAVE_HIGH_IDLE; break; // high power
+    case 3: p = POWER_SAVE_MAX_POWER; break; // max power
+    default: p = 0xff;
+  }
+  
+  if (p != 0xff)
+    AppWifiSetPowerSaveProfile(p);
+}
+
+/**
  * @brief Associates and connects to an already configured AP
  * @param Pt : current protothread pointer
  * @param Mail : protothread mail
@@ -480,51 +535,57 @@ static PT_THREAD(PtWifi_setup_AP(struct pt *Pt, const RosMailType *Mail, rsuint8
 static PT_THREAD(PtWifi_connect(struct pt *Pt, const RosMailType *Mail)) {
   static struct pt childPt;
 
-  PT_BEGIN(Pt);  
-  // Read AP info
-  #ifdef USE_LUART_TERMINAL
-  PRINTLN("SendApiGetApinfoReq...");
-  #endif
-  SendApiGetApinfoReq(COLA_TASK);
-  PT_YIELD_UNTIL(Pt, IS_RECEIVED(API_GET_APINFO_CFM));
+  PT_BEGIN(Pt);
   
-  // Scan for known AP's
-  #ifdef USE_LUART_TERMINAL
-  PRINTLN("PtAppWifiScan...");
-  #endif
-  PT_SPAWN(Pt, &childPt, PtAppWifiScan(&childPt, Mail));
-
-  // Connect to AP if it is available
-  if (AppWifiIsApAvailable()) {
+  if (!is_suspended) {
+    Wifi_set_power_save_profile(3); // max power
+    AppWifiSetTxPower(MAX_TX_POWER);
+    
+    // Read AP info
     #ifdef USE_LUART_TERMINAL
-    PRINTLN("AppWifiIsApAvailable: YES");
-    PRINTLN("PtWifi_connect spawning PtAppWifiConnect...");
+    PRINTLN("SendApiGetApinfoReq...");
     #endif
+    SendApiGetApinfoReq(COLA_TASK);
+    PT_YIELD_UNTIL(Pt, IS_RECEIVED(API_GET_APINFO_CFM));
+    
+    // Scan for known AP's
+    #ifdef USE_LUART_TERMINAL
+    PRINTLN("PtAppWifiScan...");
+    #endif
+    PT_SPAWN(Pt, &childPt, PtAppWifiScan(&childPt, Mail));
 
-    AppLedSetLedState(LED_STATE_CONNECTING);
-    PT_SPAWN(Pt, &childPt, PtAppWifiConnect(&childPt, Mail));
-    AppLedSetLedState(LED_STATE_IDLE);
-    //
-    if (AppWifiIsConnected()) {
-      // Connected to AP
+    // Connect to AP if it is available
+    if (AppWifiIsApAvailable()) {
       #ifdef USE_LUART_TERMINAL
-      print_SSID();
-      print_IP_config();
+      PRINTLN("AppWifiIsApAvailable: YES");
+      PRINTLN("PtWifi_connect spawning PtAppWifiConnect...");
       #endif
-      PtMailHandled = TRUE;
 
-      // Update DNS client with default gateway addr
-      SendApiDnsClientAddServerReq(COLA_TASK, AppWifiIpv4GetGateway(), AppWifiIpv6GetAddr()->Gateway);
-    }    
+      AppLedSetLedState(LED_STATE_CONNECTING);
+      PT_SPAWN(Pt, &childPt, PtAppWifiConnect(&childPt, Mail));
+      AppLedSetLedState(LED_STATE_IDLE);
+      //
+      if (AppWifiIsConnected()) {
+        // Connected to AP
+        #ifdef USE_LUART_TERMINAL
+        print_SSID();
+        print_IP_config();
+        #endif
+        PtMailHandled = TRUE;
+
+        // Update DNS client with default gateway addr
+        SendApiDnsClientAddServerReq(COLA_TASK, AppWifiIpv4GetGateway(), AppWifiIpv6GetAddr()->Gateway);
+      }    
+    }
+    else {
+      #ifdef USE_LUART_TERMINAL
+      PRINTLN("AppWifiIsApAvailable: NO");
+      #endif
+      // Avoid to store a corrupt SSID
+      SendApiWifiSetSsidReq(COLA_TASK, 0, NULL);
+    }
   }
-  else {
-    #ifdef USE_LUART_TERMINAL
-    PRINTLN("AppWifiIsApAvailable: NO");
-    #endif
-    // Avoid to store a corrupt SSID
-    SendApiWifiSetSsidReq(COLA_TASK, 0, NULL);
-  }
-  
+
   PT_END(Pt);
 }
 
@@ -540,6 +601,8 @@ rsuint8 Wifi_is_connected() {
  * @brief Sends a query to close the currently open TCP connection
  **/
 void Wifi_TCP_close() {
+  if (is_suspended)
+    return;
   SendApiSocketCloseReq(COLA_TASK, socketHandle);
   socketHandle = 0;
 }
@@ -549,6 +612,9 @@ void Wifi_TCP_close() {
  * @param len : number of bytes to send
  **/
 void Wifi_TCP_send(rsuint16 len) {
+  if (is_suspended)
+    return;
+
   #ifdef USE_LUART_TERMINAL
   PRINTLN("Send...");
   #endif
@@ -561,6 +627,9 @@ void Wifi_TCP_send(rsuint16 len) {
  * @param len : number of bytes to send
  **/
 char Wifi_TCP_receive() {
+  if (is_suspended)
+    return false;
+  
   if (!TCP_received) {
     #ifdef USE_LUART_TERMINAL
     PRINTLN("No TCP data received!");
@@ -598,6 +667,7 @@ rsuint8 Wifi_get_status() {
   status |= ((Wifi_is_connected() & 1) << 0);
   status |= ((TCP_is_connected & 1) << 1);
   status |= ((TCP_received & 1) << 2);
+  status |= ((is_suspended & 1) << 3);
   return status;
 }
 
@@ -631,25 +701,6 @@ static PT_THREAD(PtWifi_power_on_off(struct pt *Pt,
   else
     PT_SPAWN(Pt, &childPt, PtAppWifiPowerOff(&childPt, Mail));
   PT_END(Pt);
-}
-
-/**
- * @brief Sets the powersave profile
- * @param profile : powersave profile, 0: low power, 1: medium power,
- * 2: high power, 3: max power
- **/
-void Wifi_set_power_save_profile(rsuint8 profile) {
-  rsuint8 p;
-  switch (profile) {
-    case 0: p = POWER_SAVE_LOW_IDLE; break; // low power
-    case 1: p = POWER_SAVE_MEDIUM_IDLE; break; // medium power
-    case 2: p = POWER_SAVE_HIGH_IDLE; break; // high power
-    case 3: p = POWER_SAVE_MAX_POWER; break; // max power
-    default: p = 0xff;
-  }
-  
-  if (p != 0xff)
-    AppWifiSetPowerSaveProfile(p);
 }
 
 /**
@@ -842,17 +893,19 @@ static PT_THREAD(PtWifi_TCP_start(struct pt *Pt, const RosMailType *Mail, ApiSoc
   #endif
 
   PT_BEGIN(Pt);
-
-  TCP_is_connected = false;
   
-  AppSocketStartTcpClient(&PtList, addr, PtWifi_TCP_on_connect);  
+  if (!is_suspended) {
+    TCP_is_connected = false;
+    
+    AppSocketStartTcpClient(&PtList, addr, PtWifi_TCP_on_connect);  
 
-  #ifdef USE_LUART_TERMINAL
-  if (pInst->LastError != RSS_SUCCESS) {
-    sprintf(TmpStr, "AppSocketStartTcpClient ERROR! pInst->LastError == %d", pInst->LastError);
-    PRINTLN(TmpStr);
+    #ifdef USE_LUART_TERMINAL
+    if (pInst->LastError != RSS_SUCCESS) {
+      sprintf(TmpStr, "AppSocketStartTcpClient ERROR! pInst->LastError == %d", pInst->LastError);
+      PRINTLN(TmpStr);
+    }
+    #endif
   }
-  #endif
 
   PT_END(Pt);
 }
@@ -1058,6 +1111,7 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail)) {
         sprintf(TmpStr, "Wifi_is_connected(): %d", status & 1 << 0); PRINTLN(TmpStr);
         sprintf(TmpStr, "TCP_is_connected: %d", status & 1 << 1); PRINTLN(TmpStr);
         sprintf(TmpStr, "TCP_received: %d", status & 1 << 2); PRINTLN(TmpStr);
+        sprintf(TmpStr, "is_suspended: %d", status & 1 << 3); PRINTLN(TmpStr);
 
         AppSocketDataType *pInst = (AppSocketDataType *)PtInstDataPtr;
         sprintf(TmpStr, "pInst->LastError: %d", pInst->LastError); PRINTLN(TmpStr);
@@ -1084,6 +1138,12 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail)) {
       else if (strcmp(argv[0], "disc") == 0) {
         if (AppWifiIsAssociated())
           PT_SPAWN(Pt, &childPt, PtAppWifiDisconnect(&childPt, Mail));
+      }
+      else if (strcmp(argv[0], "suspend") == 0) {
+        PT_SPAWN(Pt, &childPt, PtWifi_suspend(&childPt, Mail));
+      }
+      else if (strcmp(argv[0], "resume") == 0) {
+        PT_SPAWN(Pt, &childPt, PtWifi_resume(&childPt, Mail));
       }
       else
       {
@@ -1247,7 +1307,7 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail)) {
                                                    param));        
         break;
       }
-      case 13: { // Wifi set powersave profile        
+      case 13: { // Wifi set powersave profile      
         // Read parameter
         // 0: low power, 1: medium power, 2: high power, 3: max power
         rsuint8 param;
@@ -1266,6 +1326,14 @@ static PT_THREAD(PtMain(struct pt *Pt, const RosMailType *Mail)) {
         
         // Set transmit power
         Wifi_set_tx_power(param);
+        break;
+      }
+      case 15: { // Wifi chip suspend
+        PT_SPAWN(Pt, &childPt, PtWifi_suspend(&childPt, Mail));
+        break;
+      }
+      case 16: { // Wifi chip resume
+        PT_SPAWN(Pt, &childPt, PtWifi_resume(&childPt, Mail));
         break;
       }
 
