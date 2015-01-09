@@ -541,6 +541,10 @@ static PT_THREAD(PtWifi_connect(struct pt *Pt, const RosMailType *Mail)) {
     Wifi_set_power_save_profile(3); // max power
     AppWifiSetTxPower(MAX_TX_POWER);
     
+    // Avoid corrupt SSID
+    SendApiWifiSetSsidReq(COLA_TASK, 0, NULL);
+    PT_WAIT_UNTIL(Pt, IS_RECEIVED(API_WIFI_SET_SSID_CFM));
+  
     // Read AP info
     #ifdef USE_LUART_TERMINAL
     PRINTLN("SendApiGetApinfoReq...");
@@ -562,9 +566,18 @@ static PT_THREAD(PtWifi_connect(struct pt *Pt, const RosMailType *Mail)) {
       #endif
 
       AppLedSetLedState(LED_STATE_CONNECTING);
+
+      // Wait 1s
+      RosTimerStart(APP_PACKET_DELAY_TIMER, (1000 * RS_T1MS), &PacketDelayTimer);
+      PT_WAIT_UNTIL(Pt, IS_RECEIVED(APP_PACKET_DELAY_TIMEOUT));  
+      
       PT_SPAWN(Pt, &childPt, PtAppWifiConnect(&childPt, Mail));
       AppLedSetLedState(LED_STATE_IDLE);
-      //
+
+      // Wait 2s
+      RosTimerStart(APP_PACKET_DELAY_TIMER, (2000 * RS_T1MS), &PacketDelayTimer);
+      PT_WAIT_UNTIL(Pt, IS_RECEIVED(APP_PACKET_DELAY_TIMEOUT));  
+      
       if (AppWifiIsConnected()) {
         // Connected to AP
         #ifdef USE_LUART_TERMINAL
@@ -575,7 +588,12 @@ static PT_THREAD(PtWifi_connect(struct pt *Pt, const RosMailType *Mail)) {
 
         // Update DNS client with default gateway addr
         SendApiDnsClientAddServerReq(COLA_TASK, AppWifiIpv4GetGateway(), AppWifiIpv6GetAddr()->Gateway);
-      }    
+      }
+      else {
+        #ifdef USE_LUART_TERMINAL
+        PRINTLN("Unable to connect");
+        #endif
+      }
     }
     else {
       #ifdef USE_LUART_TERMINAL
@@ -583,7 +601,8 @@ static PT_THREAD(PtWifi_connect(struct pt *Pt, const RosMailType *Mail)) {
       #endif
       // Avoid to store a corrupt SSID
       SendApiWifiSetSsidReq(COLA_TASK, 0, NULL);
-    }
+      PT_WAIT_UNTIL(Pt, IS_RECEIVED(API_WIFI_SET_SSID_CFM));
+    }    
   }
 
   PT_END(Pt);
